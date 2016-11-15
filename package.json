@@ -4,7 +4,9 @@
   "description": "BEM renDER plugin for Express",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "postinstall": "npm run deps",
+    "make": "enb make",
+    "deps": "bower i"
   },
   "keywords": [
     "BEM",
@@ -14,6 +16,16 @@
   "author": "Ya",
   "license": "ISC",
   "dependencies": {
-    "bem-xjst": "^8.3.1"
+    "bem-xjst": "^8.3.1",
+    "bower": "^1.8.0",
+    "chokidar-cli": "^1.2.0",
+    "enb": "^1.5.1",
+    "enb-bem-techs": "^2.2.1",
+    "enb-bemxjst": "^8.3.0",
+    "enb-borschik": "^2.4.0",
+    "enb-js": "^1.1.0",
+    "enb-stylus": "^2.4.0",
+    "mkdirp": "^0.5.1",
+    "ym": "^0.1.2"
   }
 }

@@ -1,45 +1,54 @@
 
-var fs = require('fs'),
+const fs = require('fs'),
 	path = require('path'),
 	bemxjst = require('bem-xjst'),
+	mkdir = require('mkdirp'),
 	bemhtml = bemxjst.bemhtml,
-	bemtree = bemxjst.bemtree;
+	bemtree = bemxjst.bemtree,
+	forker = require('child_process').execFile;
 
-var views;
-var filesRegex = /(.+)\.(bemhtml|bemtree)\.js$/i;
-			
+var blocksDir = 'blocks/**',
+	views,
+	filesRegex = /(.+)\.(bemhtml|bemtree)\.js$/i,
+	watcher = 'chokidar',
+	watcherOpts =  [ blocksDir, '--silent', '--initial', '-c', 'enb make' ];
 
+
+watchThemAll();
 
 module.exports.render = function(name, options, calabock){
-	var waiter = [];
-	if (views == null) {
-		waiter.push(precompileViews( path.dirname(name) ));
-	}
-	key = filesRegex.exec(path.basename(name))[1];
-	Promise.all(waiter).then(()=>{
-		var bemjson, html;
-		view = views[key];
-		if (view == null) {
-			view = {};
-			console.log( 'Warning: no templates found for ', key );
-		}
-		if (view.btTmpl) {
-			bemjson = view.btTmpl.apply({
-				block: 'root',
-				data: options
-			});
-			console.log( 'bemjson', JSON.stringify(bemjson, null, 2) );
-		} else {
-			bemjson = options;
-		}
-		if (view.tmpl) {
-			html = view.tmpl.apply(bemjson);
-			console.log( 'html:\n', html );
-		} else {
-			html = bemjson;
-		}
-		calabock(null, html);
-	})
+	var view, waiter = [],
+		vname = path.dirname(name),
+		base = path.basename(name).replace(/\.(bemhtml|bemtree)\.js/i, ''),
+		bhtmlFile = base + '.bemhtml.js',
+		btreeFile = base + '.bemtree.js';
+
+	// view = views[vname];
+	// if (view == null) {
+	// 	view = views[vname] = {
+	// 		btTmpl : 
+	// 	};
+	// }
+	
+	console.log( 'name %s => %s:%s', name, bhtmlFile, btreeFile );
+	var bTree = require(path.join(vname, btreeFile)).BEMTREE,
+		bHtml = require(path.join(vname, bhtmlFile)).BEMHTML,
+		bemjson = bTree.apply({
+			block: 'root',
+			data: options
+		}),
+		html;
+	console.log( 'bemjson', JSON.stringify(bemjson, null, 2) );
+	// } else {
+	// 	bemjson = options;
+	// }
+	// if (view.tmpl) {
+		html = bHtml.apply(bemjson);
+		console.log( 'html:\n', html );
+	// } else {
+		// html = bemjson;
+	// }
+	calabock(null, html);
 }
 
 function precompileViews(dir) {
@@ -70,6 +79,23 @@ function precompileViews(dir) {
 		})	
 	})
 	
+}
+
+
+function watchThemAll() {
+	var enbd = '.enb',
+		makef = path.join(enbd, 'make.js'),
+		src = path.join(path.dirname(module.filename), '/.enb/make.js')
+	mkdir.sync(enbd);
+	if ( !fs.existsSync( makef )) {
+		console.log( 'enb conf does not exist', src, makef );
+		fs.createReadStream(src).pipe(fs.createWriteStream( makef ));
+	}
+	console.log( 'Watching for ',  watcherOpts[0]);
+	forker(watcher, watcherOpts, { }, (error, stdout, stderr)=>{
+        // врядли сюда что-то попадёт в нормальной ситуации
+        console.log( 'Error', error, stderr, stdout );
+    });
 }
 
 // 
