@@ -8,12 +8,20 @@ const path = require('path'),
 	uglify = require('gulp-uglify'),
 	rename = require('gulp-rename2'),
 	bemhtml = require('gulp-bem-xjst'),
-	filter = require('gulp-filter'),
+	makeGulpFilter = require('gulp-filter'),
 	postcss = require('gulp-postcss'),
 	src = require('gulp-enb-src'),
-	fs = require('mz/fs');
+	fs = require('mz/fs'),
+	watcherBuilder = require('./watcher'),
+	crypto = require('crypto');
 
+function genIdx(...a){
+	return crypto.createHash('md5').update( JSON.stringify(a)).digest('hex');
+}
 
+function textEscapeForRE(text) {
+    return text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&').replace(/\n|\r|\n\r|\r\n/g, '');
+}
 
 const autoprefixer = require('autoprefixer');
 var cssProcessors = [ autoprefixer({browsers: ['ie >= 10', 'last 2 versions', 'opera 12.1', '> 2%']}) ];
@@ -35,8 +43,15 @@ const globalLevels = [
 } );
 
 var debug = true;
+var log = (!debug) ? ( )=>{ } : function(){ console.log.apply(console, arguments) };
+
+
 const projectRootDir = path.dirname(process.mainModule.filename);
 const defaultBundleDir = path.join(projectRootDir, 'views' );
+var watcher, 
+	goodCache = { },
+	promiseChain = null,
+	waiters = 0;
 	
 var config = {
 	'css' : { ext:[ '.css' ]},
@@ -47,8 +62,16 @@ var config = {
 
 
 var extensions = Array.prototype.concat.apply([], Object.values(config).map(c=>c.ext));
-if (debug) console.log( 'extensions', extensions );
+log( 'extensions', extensions );
 
+
+Object.values(config).forEach(v => {
+	if (!v.ext) return ;
+	v.re  = new RegExp( '.*('+v.ext.map(textEscapeForRE).join('|')+')$' );
+	if (v.exclude) v.excludeRe = new RegExp( '.*('+v.exclude.map(textEscapeForRE).join('|')+')$' );
+	log( 'Filter by ', v.re );
+	if (v.excludeRe) log( 'Excluding ', v.excludeRe );
+})
 
 module.exports = buildBundle;
 
@@ -59,121 +82,157 @@ function buildBundle( {
 		buildDir = '.enb/tmp/build',
 		levels = []
 	} = {}) {
-	try {
 
-		Object.values(config).forEach(v => {
-			if (!v.ext) return ;
-			var re, nre;
-			re  = new RegExp( '.*('+v.ext.join('|')+')$' );
-			if (v.exclude) nre = new RegExp( '.*('+v.exclude.join('|')+')$' );
-			if (debug) console.log( 'Filter by ',  re );
-			if (debug && nre) console.log( 'Excluding ', nre );
-			v.filter = filter( 
-				f => {
-					if (nre && nre.test(f.path)) return false; 
-					return re.test(f.path)
-				},
-				{restore: true}
+	levels = globalLevels.concat(levels);
+	var curConfHash = genIdx(levels, bundleDir, buildDir, staticDir, bundleName);
+	
+	var declName = path.join(bundleDir, bundleName+'.bemdecl.js');
+	delete require.cache[declName];
+	var decl = require( declName ).blocks;
+
+	if (watcher == null) {
+		watcher = watcherBuilder({ 
+			path: levels.concat([bundleDir]).map(p => ((typeof p == 'string') ? p : p.path)), 
+			options: {debug: true}, 
+			onChange: function(args){
+				log(`FS event: ${type} ${cpath} => invalidate cache`);
+				goodCache = { };
+			} }
+		);
+	} else {
+
+		if (goodCache[curConfHash] === true) {
+			return new Promise(
+				(resolve, rej) => {
+					resolve(decl) 
+				}
 			);
-		})
-
-		var original_write;
-		levels = globalLevels.concat(levels);
-		var declName = path.join(bundleDir, bundleName+'.bemdecl.js');
-		delete require.cache[declName];
-		var decl = require( declName ).blocks;
-
-		if (debug) {
-			console.log( 'decl', decl );
-		} else {
-			original_write = process.stdout.write;
-			process.stdout.write = function(string, encoding, fd) {	};
 		}
-		
-		var inputFiles = src({
-			levels,
-			decl,
-			tech : 'js',
-			extensions,
-			root: projectRootDir
-		});
-		
-			
-		// if (debug)
-			// stLog('all', inputFiles)
 
-		return new Promise( (response, reject) => {
+		if ( waiters > 0 ) {
+			waiters++;
+			return (promiseChain = promiseChain.then(() => {
+				return doBuildBundle();
+			}))
+		}
+	}
+
+	waiters++;
+	return (promiseChain = doBuildBundle( ));
+
+
+	function doBuildBundle() {
+
+		if (goodCache[curConfHash] === true) {
+			return new Promise(
+				(resolve, rej) => {
+					resolve(decl) 
+				}
+			);
+		}
+
+		var promo = new Promise( (resolve, reject) => {
 			try {
-				var unfilteredFiles = enbMakeType('bemtree', inputFiles, bundleName+'.bemtree.js', buildDir, function(stream){
+			
+				var original_write;
+
+				if (debug) {
+					log( 'decl', decl );
+				} else {
+					original_write = process.stdout.write;
+					process.stdout.write = function(string, encoding, fd) {	};
+				}
+				
+				var inputFiles = src({
+					levels,
+					decl,
+					tech : 'css', // ?
+					extensions,
+					root: projectRootDir
+				});
+			
+				// if (debug)
+				// 	stLog('all', inputFiles)
+
+		
+				var unfilteredFiles = enbMakeTech('bemtree', inputFiles, bundleName+'.bemtree.js', buildDir, function(stream){
 					return stream
 						.pipe( bemhtml({}, 'bemtree'))
 						.pipe( rename((p, f)=>{ return bundleName+'.bemtree.js'}))
-
 				});
 
-				unfilteredFiles = enbMakeType('bemhtml', unfilteredFiles, bundleName+'.bemhtml.js', buildDir, function(stream){
+				unfilteredFiles = enbMakeTech('css', unfilteredFiles, bundleName+'.min.css', staticDir, function(stream){
+					return stream.pipe( postcss(cssProcessors) );
+				});
+
+				unfilteredFiles = enbMakeTech('bemhtml', unfilteredFiles, bundleName+'.bemhtml.js', buildDir, function(stream){
 					return stream
 						.pipe( bemhtml({}, 'bemhtml'))
 						.pipe( rename((p, f)=>{ return bundleName+'.bemhtml.js'}))
 				});	
 
-				unfilteredFiles = enbMakeType('js', unfilteredFiles, bundleName+'.min.js', staticDir, function(stream){
+				unfilteredFiles = enbMakeTech('js', unfilteredFiles, bundleName+'.min.js', staticDir, function(stream){
 					return stream.pipe( uglify() );
 				});
 
-				unfilteredFiles = enbMakeType('css', unfilteredFiles, bundleName+'.min.css', staticDir, function(stream){
-					return stream.pipe( postcss(cssProcessors) );
-				});
 
 				unfilteredFiles.on('finish', (cb)=>{
 					if (!debug)
 						process.stdout.write = original_write;
-					response(decl);
+					goodCache[curConfHash] = true;
+					waiters--;
+					resolve(decl);
+					// resolve(decl);
 				})
 			} catch (e){
 				if (!debug)
 					process.stdout.write = original_write;
 				console.log( 'e', e );
+				waiters--;
+				reject(e);
 			}	
 		})
-	} catch (e){
-		if (!debug)
-			process.stdout.write = original_write;
-		console.log( 'Error', e, s.stack);
+		
+		return promo;
 	}
-	
 }
-	 	
 
 	
 function stLog(descr, st) {
 	st.on('data', (f)=>{
-		console.log( descr,  f.relative );
+		log( descr,  f.relative );
 	});
 }
 
-function enbMakeType( type, inStream, fileName, dst, pipeline) {
+function enbMakeTech( type, inStream, fileName, dst, pipeline) {
+	var conf = config[type],
+		filt = makeGulpFilter( 
+			f => {
+				if (conf.excludeRe && conf.excludeRe.test(f.path)) return false; 
+				return conf.re.test(f.path)
+			},
+			{restore: true}
+		);
 	var one = inStream
-		.pipe( config[type].filter )
+		.pipe( filt )
 		.pipe( read() );
 	if (debug) stLog( ''+type,  one);
 	var two = pipeline( one.pipe( concat(fileName)) )
 		.pipe( gulp.dest(dst));
-	chechCleaner(path.join(dst, fileName), two);
+	cacheCleaner(path.join(dst, fileName), two);
 	if (debug) 
 		stLog( ''+type+' => ', two );
-	return two.pipe( config[type].filter.restore );
+	return two.pipe( filt.restore );
 }
 
 
-function chechCleaner( file, stream){
+function cacheCleaner( file, stream){
 	var count = 0;
 	stream.on('finish', ()=>{
 		if (count == 0) {
 			fs.access(file)
 				.then(()=>{
-					if (debug) 
-						console.log( 'Empty output => cleaning cache file', file );
+					log( 'Empty output => cleaning cache file', file );
 					return fs.unlink(file);
 				}).catch((e)=>{})
 		}
