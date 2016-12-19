@@ -1,77 +1,62 @@
+'use strict';
 
-const path = require('path'),
-	enbMake = require('./enb');
+const _ = require('lodash');
+const path = require('path');
+const enb = require('./enb');
+const fileEval = require('file-eval');
+const emptyBemhtml = require('bem-xjst').bemhtml.compile('');
+const nodeEval = require('node-eval');
 
-const debug = false;
-function _d(){
-	if (debug)
-		console.log.apply(console, arguments);
+
+const defaultBundleDir = path.join(process.cwd(), '.enb/tmp/bundles');
+
+// tests
+// readme english
+
+function onErrorNoExistent(defValue) {
+    return function(err) {
+        if ((err.code === 'ENOENT') || (err.syscall === 'open')) {
+            return defValue;
+        } else throw err;
+    }
 }
-// watchThemAll();
 
-// globalLevel, config
-// var plugin = require('cool-bem-ololo')({
-// 	blah: 123
-// });
+module.exports = function(opts) {
+    let enbMake = enb(opts);
 
-// https://www.npmjs.com/package/clear-require
-// https://github.com/nodules/file-eval
+    return function render(name, options, callback) {
+        var log = (options && options.debug) ? console.log.bind(console) : function() {},
+            bundleName = path.basename(name).replace(/\.bem(html|tree|decl)\.js/i, ''),
+            bundleDir = path.join(defaultBundleDir, bundleName)
 
-var buildDir = path.join(process.cwd(), '.enb/tmp/build' );
+        log('name', name, bundleName, path.dirname(name), options);
 
+        enbMake(_.assign({}, options, { bundleName, bundleDir }))
+            .then(res => {
+                if (res.bemhtml.length) log('Bemh', res.bemhtml[0].path, nodeEval(res.bemhtml[0].contents.toString()));
+                return Promise.all([
+                    fileEval(path.join(bundleDir, bundleName + '.bemtree.js'))
+                        .then(res => res.BEMTREE ? res.BEMTREE : res)
+                        .catch(onErrorNoExistent(null)),
+                    fileEval(path.join(bundleDir, bundleName + '.bemhtml.js'))
+                        .then(res => res.BEMHTML ? res.BEMHTML : res)
+                        .catch(onErrorNoExistent(emptyBemhtml))
+                ])
+            })
+            .then(bemParts => {
+                log('Loaded from enb: ', bemParts);
+                                                        // if there is no bemtree fallback to bemjson
+                let bemjson = bemParts[0] ? bemParts[0].apply(options) : options.bemjson;
+                log('bemjson', JSON.stringify(bemjson, null, 2));
 
-module.exports.render = function(name, options, calabock){
-	var view, waiter = [],
-		vname = path.dirname(name),
-		base = path.basename(name).replace(/\.bem(html|tree|decl)\.js/i, ''),
-		bhtmlFile = path.join(buildDir, base + '.bemhtml.js'),
-		btreeFile = path.join(buildDir, base + '.bemtree.js'),
-		bemjson, html, decl;
+                let html = bemParts[1].apply(bemjson);
+                log('html:\n', html);
 
-	_d( 'name', name, base, vname, btreeFile);
-
-	enbMake({bundleName: base, levels: ['blocks'], buildDir})
-		.then( (cdecl) => {
-			decl = cdecl;
-
-			var rootRender = options.enbRoot ? options.enbRoot :
-				( ( decl && decl[0] && decl[0].block) ? decl[0].block : 'root');
-
-			delete require.cache[ btreeFile ];
-			var bTree = require( btreeFile );
-
-			if (bTree.BEMTREE) bTree = bTree.BEMTREE;
-			bemjson = bTree.apply({
-				block: rootRender,
-				data: options
-			});
-		}).catch(e => {
-			if ((e.code === 'MODULE_NOT_FOUND') || (e.syscall === 'open') ) {
-						// мы тут, если файла bemtree нe существует
-				bemjson = decl;
-			} else throw e;					// всё остальное пробрасываем дальше
-		}).then(()=>{
-			_d( 'bemjson', JSON.stringify(bemjson, null, 2) );
-
-			delete require.cache[ bhtmlFile ];
-			var bHtml = require( bhtmlFile );
-			var bTree;
-			if (bHtml.BEMHTML) bTree = bHtml.BEMHTML;
-
-			html = bHtml.apply(bemjson);
-
-		}).catch((e)=>{
-			if ((e.code === 'MODULE_NOT_FOUND') || (e.syscall === 'open')) {
-						// мы тут, если файла bemhtml нe существует
-				html = bemjson;
-			} else throw e;					// всё остальное пробрасываем дальше
-		}).then(()=>{
-			_d( 'html:\n', html );
-			calabock(null, html);
-		})
-		.catch( e => {
-			calabock(e, null);
-		});
-};
-
+                callback(null, html);
+            })
+            .catch(e => {
+                callback(e, null);
+            });
+    };
+}
 

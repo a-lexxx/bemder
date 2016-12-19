@@ -3,42 +3,29 @@
 var chokidar = require('chokidar');
 var _ = require('lodash');
 
-function getDiff(dst, src, retval) {
-	var d;
-	if (src != null){
-		if (!(src instanceof Array)) src = [ src ];
-		d = _.difference( _.compact( src ), dst);
-		if (d.length) 
-			return d;
-	}
-	return null;
-}
+/**
+ * @param  {Object} Options for watcher
+ *      path     {String} path to watch for
+ *      onChange {Function} callback function, called at any fs change event (new file, change, remove, etc.)
+ *      debounce {Number} debouncing time of callback function
+ *      ignored  {Array} array of strings to ignore
+ * @return {Object} Returning watcher
+ */
+module.exports = function(opts) {
 
-module.exports = function({
-		path = './',
-		ignored = ['node_modules', '.git', '.enb'],
-		onChange,
-		options
-} = {}) {
+    if (typeof opts.onChange !== 'function') throw new Error('onChange callback should be a function');
 
+    var watcher = chokidar.watch(opts.path || './', {
+        ignored: _.union([ 'node_modules', '.git', '.enb' ], opts.ignored),
+        persistent: true,
+        ignoreInitial: true
+    });
 
-	options = Object.assign({
-		debug: false,
-		debounce: 200
-	}, options);
+    watcher.on('all',
+        _.debounce(function(type, cpath) {
+            opts.onChange.call(null, cpath);
+        }, opts.debounce || 200)
+    );
 
-	if (typeof onChange != 'function') throw new Error('onChange callback should be a function');
-
-	var changeHandler = _.debounce (function (type, cpath){
-		onChange.call(null, cpath);
-	}, options.debounce);
-
-	var watcher = chokidar.watch(path, {
-		ignored,
-		persistent: true,
-		ignoreInitial: true
-	});
-	
-	watcher.on('all', changeHandler);
-	
+    return watcher;
 }

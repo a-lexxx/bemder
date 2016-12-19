@@ -17,16 +17,21 @@
     "enb-borschik": "^2.4.0",
     "enb-js": "^1.1.0",
     "enb-stylus": "^2.4.0",
+    "file-eval": "^1.1.0",
     "gulp": "^3.9.1",
     "gulp-bem-xjst": "^1.3.0",
     "gulp-concat": "^2.6.1",
+    "gulp-csso": "^2.0.0",
     "gulp-enb-src": "git+https://github.com/gulp-bem/gulp-enb-src.git",
     "gulp-filter": "^4.0.0",
     "gulp-postcss": "^6.2.0",
     "gulp-read": "0.0.1",
     "gulp-rename2": "^0.1.5",
+    "gulp-stylus": "^2.6.0",
     "gulp-uglify": "^2.0.0",
+    "merge2": "^1.0.2",
     "mz": "^2.5.0",
+    "through2-filter": "^2.0.0",
     "ym": "^0.1.2"
   }
 }
